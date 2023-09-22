@@ -27,7 +27,7 @@ pub trait Particle {
     fn store_acceleration(&mut self, acceleration: &Vector3<f64>);
 
     fn update_acceleration(&mut self, other: &impl Particle, specific_acceleration: &Vector3<f64>) {
-        self.store_acceleration(&(specific_acceleration*other.mass()))
+        self.store_acceleration(&(specific_acceleration * other.mass()))
     }
 
     // old methods
@@ -79,7 +79,11 @@ impl Particle for TestParticle {
 
 impl TestParticle {
     pub fn new(position: Point3<f64>, velocity: Vector3<f64>) -> Self {
-        Self { position, velocity, acceleration: Vector3::<f64>::default() }
+        Self {
+            position,
+            velocity,
+            acceleration: Vector3::<f64>::default(),
+        }
     }
 }
 
@@ -116,7 +120,11 @@ impl MassiveParticle {
     pub fn new(position: Point3<f64>, velocity: Vector3<f64>, mass: f64) -> Self {
         Self {
             mass,
-            centre: TestParticle { position, velocity, acceleration: Vector3::<f64>::default() },
+            centre: TestParticle {
+                position,
+                velocity,
+                acceleration: Vector3::<f64>::default(),
+            },
         }
     }
 
