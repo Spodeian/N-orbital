@@ -1,8 +1,9 @@
-use csv::WriterBuilder;
-use nalgebra::Vector3;
+use N_orbital::*;
 use std::error::Error;
 use std::time::Instant;
-use N_orbital::*;
+use nalgebra::Vector3;
+use itertools::Itertools;
+use csv::WriterBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let start = Instant::now();

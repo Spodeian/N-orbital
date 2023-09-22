@@ -1,5 +1,6 @@
 extern crate nalgebra as na;
 use na::{Point3, Vector3};
+use core::cell::{BorrowMutError, RefCell};
 // use serde::{Serialize, Deserialize};
 
 // use physical_constants::NEWTONIAN_CONSTANT_OF_GRAVITATION;
@@ -11,8 +12,8 @@ pub const SOFTENER: f64 = 0.0001; // Artificially decrease force strength relati
 
 pub trait Particle {
     fn mass(&self) -> f64;
-    fn position(&self) -> Point3<f64>;
-    fn velocity(&self) -> Vector3<f64>;
+    fn position(&self) -> &Point3<f64>;
+    fn velocity(&self) -> &Vector3<f64>;
     fn update(&mut self, acceleration: &Vector3<f64>, integration_interval: f64);
 
     // new methods
@@ -24,9 +25,9 @@ pub trait Particle {
         (G / (seperation.normalize_mut().powi(2) + SOFTENER)) * seperation
     }
 
-    fn store_acceleration(&mut self, acceleration: &Vector3<f64>);
+    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError>;
 
-    fn update_acceleration(&mut self, other: &impl Particle, specific_acceleration: &Vector3<f64>) {
+    fn update_acceleration(&self, other: &impl Particle, specific_acceleration: &Vector3<f64>) -> Result<(), BorrowMutError> {
         self.store_acceleration(&(specific_acceleration * other.mass()))
     }
 
@@ -51,7 +52,7 @@ pub trait Particle {
 pub struct TestParticle {
     position: Point3<f64>,
     velocity: Vector3<f64>,
-    acceleration: Vector3<f64>,
+    acceleration: RefCell<Vector3<f64>>,
 }
 
 impl Particle for TestParticle {
@@ -59,12 +60,12 @@ impl Particle for TestParticle {
         0.0
     }
 
-    fn position(&self) -> Point3<f64> {
-        self.position
+    fn position(&self) -> &Point3<f64> {
+        &self.position
     }
 
-    fn velocity(&self) -> Vector3<f64> {
-        self.velocity
+    fn velocity(&self) -> &Vector3<f64> {
+        &self.velocity
     }
 
     fn update(&mut self, acceleration: &Vector3<f64>, integration_interval: f64) {
@@ -72,8 +73,9 @@ impl Particle for TestParticle {
         self.velocity = self.new_velocity(acceleration, integration_interval);
     }
 
-    fn store_acceleration(&mut self, acceleration: &Vector3<f64>) {
-        self.acceleration += acceleration;
+    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError>{
+        *self.acceleration.try_borrow_mut()? += acceleration;
+        Ok(())
     }
 }
 
@@ -82,7 +84,7 @@ impl TestParticle {
         Self {
             position,
             velocity,
-            acceleration: Vector3::<f64>::default(),
+            acceleration: RefCell::new(Vector3::<f64>::default()),
         }
     }
 }
@@ -98,12 +100,12 @@ impl Particle for MassiveParticle {
         self.mass
     }
 
-    fn position(&self) -> Point3<f64> {
-        self.centre.position
+    fn position(&self) -> &Point3<f64> {
+        self.centre.position()
     }
 
-    fn velocity(&self) -> Vector3<f64> {
-        self.centre.velocity
+    fn velocity(&self) -> &Vector3<f64> {
+        self.centre.velocity()
     }
 
     fn update(&mut self, acceleration: &Vector3<f64>, integration_interval: f64) {
@@ -111,8 +113,8 @@ impl Particle for MassiveParticle {
         self.centre.velocity = self.new_velocity(acceleration, integration_interval);
     }
 
-    fn store_acceleration(&mut self, acceleration: &Vector3<f64>) {
-        self.centre.store_acceleration(acceleration);
+    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError>{
+        self.centre.store_acceleration(acceleration)
     }
 }
 
@@ -123,7 +125,7 @@ impl MassiveParticle {
             centre: TestParticle {
                 position,
                 velocity,
-                acceleration: Vector3::<f64>::default(),
+                acceleration: RefCell::new(Vector3::<f64>::default()),
             },
         }
     }
