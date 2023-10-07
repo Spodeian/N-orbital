@@ -1,9 +1,11 @@
-use N_orbital::*;
 use std::error::Error;
 use std::time::Instant;
-use nalgebra::Vector3;
-use itertools::Itertools;
+use N_orbital::*;
+// use nalgebra::Vector3;
 use csv::WriterBuilder;
+use itertools::Itertools;
+
+const SAVE_RESULTS: bool = true; // This is the wrong way to do this, but that's okay
 
 fn main() -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
@@ -50,86 +52,81 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Initialise data read/write
     let mut wtr = WriterBuilder::new().from_path("data.csv")?;
-    wtr.write_field("Time")?;
-    wtr.write_field("")?;
-    for _particle in test_particles.iter() {
-        wtr.write_field("x")?;
-        wtr.write_field("y")?;
-        wtr.write_field("z")?;
-        wtr.write_field("vx")?;
-        wtr.write_field("vy")?;
-        wtr.write_field("vz")?;
+    if SAVE_RESULTS {
+        wtr.write_field("Time")?;
         wtr.write_field("")?;
+        for _particle in test_particles.iter() {
+            wtr.write_field("x")?;
+            wtr.write_field("y")?;
+            wtr.write_field("z")?;
+            wtr.write_field("vx")?;
+            wtr.write_field("vy")?;
+            wtr.write_field("vz")?;
+            wtr.write_field("")?;
+        }
+        for _particle in massive_particles.iter() {
+            wtr.write_field("m")?;
+            wtr.write_field("x")?;
+            wtr.write_field("y")?;
+            wtr.write_field("z")?;
+            wtr.write_field("vx")?;
+            wtr.write_field("vy")?;
+            wtr.write_field("vz")?;
+            wtr.write_field("")?;
+        }
+        wtr.write_record(None::<&[u8]>)?;
     }
-    for _particle in massive_particles.iter() {
-        wtr.write_field("m")?;
-        wtr.write_field("x")?;
-        wtr.write_field("y")?;
-        wtr.write_field("z")?;
-        wtr.write_field("vx")?;
-        wtr.write_field("vy")?;
-        wtr.write_field("vz")?;
-        wtr.write_field("")?;
-    }
-    wtr.write_record(None::<&[u8]>)?;
 
     // Compute System
     let mut current_time = 0.0;
     while current_time <= total_time {
         // Save data
-        wtr.write_field(current_time.to_string())?;
-        wtr.write_field("")?;
-        for particle in test_particles.iter() {
-            wtr.write_field(particle.position().x.to_string())?;
-            wtr.write_field(particle.position().y.to_string())?;
-            wtr.write_field(particle.position().z.to_string())?;
-            wtr.write_field(particle.velocity().x.to_string())?;
-            wtr.write_field(particle.velocity().y.to_string())?;
-            wtr.write_field(particle.velocity().z.to_string())?;
+        if SAVE_RESULTS {
+            wtr.write_field(current_time.to_string())?;
             wtr.write_field("")?;
+            for particle in test_particles.iter() {
+                wtr.write_field(particle.position().x.to_string())?;
+                wtr.write_field(particle.position().y.to_string())?;
+                wtr.write_field(particle.position().z.to_string())?;
+                wtr.write_field(particle.velocity().x.to_string())?;
+                wtr.write_field(particle.velocity().y.to_string())?;
+                wtr.write_field(particle.velocity().z.to_string())?;
+                wtr.write_field("")?;
+            }
+            for particle in massive_particles.iter() {
+                wtr.write_field(particle.mass().to_string())?;
+                wtr.write_field(particle.position().x.to_string())?;
+                wtr.write_field(particle.position().y.to_string())?;
+                wtr.write_field(particle.position().z.to_string())?;
+                wtr.write_field(particle.velocity().x.to_string())?;
+                wtr.write_field(particle.velocity().y.to_string())?;
+                wtr.write_field(particle.velocity().z.to_string())?;
+                wtr.write_field("")?;
+            }
+            wtr.write_record(None::<&[u8]>)?;
         }
-        for particle in massive_particles.iter() {
-            wtr.write_field(particle.mass().to_string())?;
-            wtr.write_field(particle.position().x.to_string())?;
-            wtr.write_field(particle.position().y.to_string())?;
-            wtr.write_field(particle.position().z.to_string())?;
-            wtr.write_field(particle.velocity().x.to_string())?;
-            wtr.write_field(particle.velocity().y.to_string())?;
-            wtr.write_field(particle.velocity().z.to_string())?;
-            wtr.write_field("")?;
-        }
-        wtr.write_record(None::<&[u8]>)?;
 
         // Compute next load
         let next_output: f64 = current_time + output_interval;
         while current_time <= next_output {
-            let mut test_accel = Vec::new();
-            let mut mass_accel = Vec::new();
 
-            for test_particle in test_particles.iter() {
-                let mut acceleration = Vector3::<f64>::new(0.0, 0.0, 0.0);
-                for massive_particle in massive_particles.iter() {
-                    acceleration += test_particle.accel_towards(massive_particle);
-                }
-                test_accel.push(acceleration);
+            for (test, massive) in test_particles
+                .iter()
+                .cartesian_product(massive_particles.iter())
+            {
+                test_calc(test, massive)?;
             }
 
-            for massive_particle_a in massive_particles.iter() {
-                let mut acceleration = Vector3::<f64>::new(0.0, 0.0, 0.0);
-                for massive_particle_b in massive_particles.iter() {
-                    if massive_particle_a != massive_particle_b {
-                        acceleration += massive_particle_a.accel_towards(massive_particle_b);
-                    }
-                }
-                mass_accel.push(acceleration);
+            for pair in massive_particles.iter().combinations(2) {
+                massive_calc(pair[0], pair[1])?;
             }
 
-            for particle in test_particles.iter_mut().zip(test_accel.iter_mut()) {
-                particle.0.update(particle.1, INTEGRATION_INTERVAL);
+            for particle in test_particles.iter_mut() {
+                particle.update(INTEGRATION_INTERVAL)?;
             }
 
-            for particle in massive_particles.iter_mut().zip(mass_accel.iter_mut()) {
-                particle.0.update(particle.1, INTEGRATION_INTERVAL);
+            for particle in massive_particles.iter_mut() {
+                particle.update(INTEGRATION_INTERVAL)?;
             }
 
             current_time += INTEGRATION_INTERVAL;
@@ -138,6 +135,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let elapsed = start.elapsed();
     println!("The program runtime was: {:?}", elapsed);
-    wtr.flush()?;
+    if SAVE_RESULTS {
+        wtr.flush()?;
+    }
     Ok(())
 }

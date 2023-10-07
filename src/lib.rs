@@ -1,50 +1,59 @@
 extern crate nalgebra as na;
-use na::{Point3, Vector3};
-use core::cell::{BorrowMutError, RefCell};
-// use serde::{Serialize, Deserialize};
-
-// use physical_constants::NEWTONIAN_CONSTANT_OF_GRAVITATION;
-
-// pub const G: f64 = NEWTONIAN_CONSTANT_OF_GRAVITATION;
+use core::cell::{BorrowError, BorrowMutError, Ref, RefCell};
+use na::{point, vector, Point3, Vector3};
 
 pub const G: f64 = 0.0376915586937436; // Units: Jupiter Mass - AU - Years
-pub const SOFTENER: f64 = 0.0001; // Artificially decrease force strength relative to seperation
+pub const SOFTENER: f64 = 0.01; // Artificially decrease force strength relative to seperation
+
+fn specific_acceleration(seperation: Vector3<f64>) -> Vector3<f64> {
+    (G / (seperation.magnitude_squared() + SOFTENER)) * seperation.normalize()
+}
+
+pub fn test_calc(test: &TestParticle, massive: &MassiveParticle) -> Result<(), BorrowMutError> {
+    test.update_acceleration(massive, &specific_acceleration(test.seperation(massive)))
+}
+
+pub fn massive_calc(a: &MassiveParticle, b: &MassiveParticle) -> Result<(), BorrowMutError> {
+    let specific_acceleration = &specific_acceleration(a.seperation(b));
+    a.update_acceleration(b, &specific_acceleration)?;
+    b.update_acceleration(a, &-specific_acceleration)
+}
+
+pub fn particle_compute(a: &impl Particle, b: &impl Particle) -> Result<(), BorrowMutError> {
+    let specific_acceleration = &specific_acceleration(a.seperation(b));
+    a.update_acceleration(b, &specific_acceleration)?;
+    b.update_acceleration(a, &-specific_acceleration)
+}
 
 pub trait Particle {
     fn mass(&self) -> f64;
     fn position(&self) -> &Point3<f64>;
     fn velocity(&self) -> &Vector3<f64>;
-    fn update(&mut self, acceleration: &Vector3<f64>, integration_interval: f64);
+    fn acceleration(&self) -> Result<Ref<Vector3<f64>>, BorrowError>;
+    fn update(&mut self, integration_interval: f64) -> Result<(), BorrowError>;
 
-    // new methods
     fn seperation(&self, other: &impl Particle) -> Vector3<f64> {
         other.position() - self.position()
     }
 
-    fn specific_acceleration(&self, mut seperation: Vector3<f64>) -> Vector3<f64> {
-        (G / (seperation.normalize_mut().powi(2) + SOFTENER)) * seperation
-    }
-
     fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError>;
 
-    fn update_acceleration(&self, other: &impl Particle, specific_acceleration: &Vector3<f64>) -> Result<(), BorrowMutError> {
+    fn update_acceleration(
+        &self,
+        other: &impl Particle,
+        specific_acceleration: &Vector3<f64>,
+    ) -> Result<(), BorrowMutError> {
         self.store_acceleration(&(specific_acceleration * other.mass()))
     }
 
-    // old methods
-    fn accel_towards(&self, other: &impl Particle) -> Vector3<f64> {
-        let seperation: Vector3<f64> = other.position() - self.position();
-        (G * other.mass() / (seperation.magnitude_squared() + SOFTENER)) * (seperation.normalize())
+    fn new_position(&self, integration_interval: f64) -> Result<Point3<f64>, BorrowError> {
+        Ok(self.position()
+            + (*(self.acceleration()?) * (integration_interval.powi(2) / 2.0)
+                + self.velocity() * integration_interval))
     }
 
-    fn new_position(&self, acceleration: &Vector3<f64>, integration_interval: f64) -> Point3<f64> {
-        self.position()
-            + (acceleration * (integration_interval.powi(2) / 2.0)
-                + self.velocity() * integration_interval)
-    }
-
-    fn new_velocity(&self, acceleration: &Vector3<f64>, integration_interval: f64) -> Vector3<f64> {
-        (acceleration * integration_interval) + self.velocity()
+    fn new_velocity(&self, integration_interval: f64) -> Result<Vector3<f64>, BorrowError> {
+        Ok((*(self.acceleration()?) * integration_interval) + self.velocity())
     }
 }
 
@@ -68,12 +77,17 @@ impl Particle for TestParticle {
         &self.velocity
     }
 
-    fn update(&mut self, acceleration: &Vector3<f64>, integration_interval: f64) {
-        self.position = self.new_position(acceleration, integration_interval);
-        self.velocity = self.new_velocity(acceleration, integration_interval);
+    fn acceleration(&self) -> Result<Ref<Vector3<f64>>, BorrowError> {
+        self.acceleration.try_borrow()
     }
 
-    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError>{
+    fn update(&mut self, integration_interval: f64) -> Result<(), BorrowError> {
+        self.position = self.new_position(integration_interval)?;
+        self.velocity = self.new_velocity(integration_interval)?;
+        Ok(())
+    }
+
+    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError> {
         *self.acceleration.try_borrow_mut()? += acceleration;
         Ok(())
     }
@@ -85,6 +99,14 @@ impl TestParticle {
             position,
             velocity,
             acceleration: RefCell::new(Vector3::<f64>::default()),
+        }
+    }
+
+    pub const fn new_const(x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64) -> Self {
+        Self {
+            position: point![x, y, z],
+            velocity: vector![vx, vy, vz],
+            acceleration: RefCell::new(vector![0.0, 0.0, 0.0]),
         }
     }
 }
@@ -108,12 +130,15 @@ impl Particle for MassiveParticle {
         self.centre.velocity()
     }
 
-    fn update(&mut self, acceleration: &Vector3<f64>, integration_interval: f64) {
-        self.centre.position = self.new_position(acceleration, integration_interval);
-        self.centre.velocity = self.new_velocity(acceleration, integration_interval);
+    fn acceleration(&self) -> Result<Ref<Vector3<f64>>, BorrowError> {
+        self.centre.acceleration()
     }
 
-    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError>{
+    fn update(&mut self, integration_interval: f64) -> Result<(), BorrowError> {
+        self.centre.update(integration_interval)
+    }
+
+    fn store_acceleration(&self, acceleration: &Vector3<f64>) -> Result<(), BorrowMutError> {
         self.centre.store_acceleration(acceleration)
     }
 }
@@ -133,4 +158,91 @@ impl MassiveParticle {
     pub fn from_test(centre: TestParticle, mass: f64) -> Self {
         Self { mass, centre }
     }
+
+    pub const fn new_const(x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64, m: f64) -> Self {
+        Self {
+            mass: m,
+            centre: TestParticle::new_const(x, y, z, vx, vy, vz),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+    use itertools::Itertools;
+
+    const P0V0M0: TestParticle = TestParticle::new_const(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+    const P1V0M0: TestParticle = TestParticle::new_const(1.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+    const P0V0M1: MassiveParticle = MassiveParticle::new_const(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+
+    const P1V0M1: MassiveParticle = MassiveParticle::new_const(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+
+    #[test]
+    fn seperation() {
+        let seperation = P0V0M0.seperation(&P1V0M0);
+        assert_eq!(seperation, vector![1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn specific_acceleration() {
+        fn specific_acceleration_test(seperation: &Vector3<f64>)  -> Vector3<f64> {
+            // (G / (seperation.magnitude_squared() + SOFTENER)) * seperation.normalize()
+            //mut (G / (seperation.normalize_mut().powi(2) + SOFTENER)) * seperation
+            G * (*seperation / (seperation.magnitude_squared().powf(1.5) + SOFTENER))
+        }
+
+        for nums in (-1000000..1000000).step_by(10000).combinations(3) {
+            let v = vector![f64::from(nums[0]), f64::from(nums[1]), f64::from(nums[2])];
+
+            let t = specific_acceleration_test(&v);
+            let f = crate::specific_acceleration(v);
+            let d = f.cross(&t);
+
+            assert!(d.magnitude() <= 0.00000000000000000001, "\nMagnitude: {:?}\nVector tested: {:?}\nlib:  {:?}\ntest: {:?}\n", d.magnitude(), v, f, t);
+        }
+    }
+
+    #[test]
+    fn one_iteration() {
+        let dt = 0.0001;
+        let dT = 4.0;
+        let T = 12.0;
+
+        const VMAX: f64 = 0.453;
+        let mut V = VMAX;
+
+        let mut v1 = crate::MassiveParticle::new_const(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1047.57);
+        let mut v2 = crate::MassiveParticle::new_const(5.035, 0.0, 0.0, 0.0, V, 0.0, 1.0);
+
+        println!("{:#?}\n{:#?}", v1, v2);
+
+        for t in (0..dT as u64) {
+            for t in (0..(T/(dt*dT)) as u64) {
+                crate::particle_compute(&v1, &v2);
+                v1.update(dt);
+                v2.update(dt);
+
+                V = V.max(v2.velocity().magnitude());
+            }
+
+            println!("{:#?}\n{:#?}", v1, v2);
+        }
+
+            assert!(V < VMAX*1.1);
+    }
+
+    // #[test]
+    // fn acceleration() {
+
+    // }
+
+    // #[test]
+    // fn update_acceleration() {
+    //     let t = p1v0m0.clone();
+
+    //     t.update_acceleration(p0v0m1);
+    // }
 }
